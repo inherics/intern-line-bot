@@ -3,6 +3,7 @@ require 'line/bot'
 class WebhookController < ApplicationController
   protect_from_forgery except: [:callback] # CSRF対策無効化
 
+
   def client
     @client ||= Line::Bot::Client.new { |config|
       config.channel_secret = ENV["LINE_CHANNEL_SECRET"]
@@ -19,7 +20,6 @@ class WebhookController < ApplicationController
     end
 
     events = client.parse_events_from(body)
-    Rails.logger.info("aaaa: #{body}")
     events.each { |event|
 
       case event
@@ -39,14 +39,10 @@ class WebhookController < ApplicationController
           tf.write(response.body)
         when Line::Bot::Event::MessageType::Location
           
-          # 位置情報を取得
           location = get_current_location(event)
 
-          #周囲のお店の情報を取得
-          stores = search_near_sotre(location)
+          stores = search_near_store(location)
 
-
-          # 返信用のメッセージを取得
           message = template_message(stores)
 
           client.reply_message(event['replyToken'], message)
@@ -68,10 +64,10 @@ class WebhookController < ApplicationController
 
 
   # 現在地から周囲のレストランの情報を取得
-  def search_near_sotre(location)
+  def search_near_store(location)
 
     # 緯度・経度・周囲の距離・店の種類（今回は「レストラン」）から周囲のお店を検索するAPI
-    location_api_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=#{location["latitude"]},#{location["longitude"]}&radius=500&types=restaurant&language=ja&key=AIzaSyADRsns1HmdT_59-4KZeLEDHAYlta5c5vg"
+    location_api_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=#{location["latitude"]},#{location["longitude"]}&radius=500&types=restaurant&language=ja&key=#{ENV["KEY"]}"
     uri = URI.parse(location_api_url)
     response = Net::HTTP.get_response(uri)
     values = JSON.parse(response.body)
@@ -87,19 +83,15 @@ class WebhookController < ApplicationController
         stores.push(store)
     end
 
-    # storesをrating(お店の評価点)の高い順にソート
+    # storesをrating(お店の評価点)の高い順にソートして返す
     stores = stores.sort{|a,b| a['rating'].to_f <=> b['rating'].to_f}.reverse
-
-
-    # 周囲のお店情報ratingの高い順にを返す
-    return stores
   end
 
 
   # お店の写真のURLを取得
   def get_photo_url(store)
     # photo_referenceを使って、そのお店の画像を取得するAPI
-    store_api_url = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=#{store}&key=AIzaSyADRsns1HmdT_59-4KZeLEDHAYlta5c5vg"
+    store_api_url = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=#{store}&key=#{ENV["KEY"]}"
     uri = URI.parse(store_api_url)
     response = Net::HTTP.get_response(uri)
     values = Nokogiri::HTML.parse(response.body)
