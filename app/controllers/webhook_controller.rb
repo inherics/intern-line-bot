@@ -39,10 +39,9 @@ class WebhookController < ApplicationController
           tf.write(response.body)
         when Line::Bot::Event::MessageType::Location
           
-          location = get_current_location(event)
-
+          # 各情報を取得
+          location = current_location_params(event)
           stores = search_near_store(location)
-
           message = template_message(stores)
 
           client.reply_message(event['replyToken'], message)
@@ -54,7 +53,7 @@ class WebhookController < ApplicationController
 
 
   # LINEで送った現在地から、住所・緯度・経度を取得
-  def get_current_location(event)
+  def current_location_params(event)
     {
       "address" => event.message['address'],
       "latitude" => event.message['latitude'],
@@ -66,33 +65,35 @@ class WebhookController < ApplicationController
   # 現在地から周囲のレストランの情報を取得
   def search_near_store(location)
 
-    # 緯度・経度・周囲の距離・店の種類（今回は「レストラン」）から周囲のお店を検索するAPI
-    location_api_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=#{location["latitude"]},#{location["longitude"]}&radius=500&types=restaurant&language=ja&key=#{ENV["KEY"]}"
+    # 緯度・経度・周囲の距離(今回は５００メートル）・店の種類（今回は「レストラン」）から周囲のお店を検索するAPI
+    location_api_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
     uri = URI.parse(location_api_url)
+    uri.query = URI.encode_www_form({ location: "#{location["latitude"]},#{location["longitude"]}", radius: 500, types: "restaurant", language: "ja", key: "#{ENV["KEY"]}" })  
     response = Net::HTTP.get_response(uri)
     values = JSON.parse(response.body)
 
-    # storesに周囲のお店の、name(お店の名前), photo_reference(お店の画像を取得するための参照情報), rating(GoogleMap上でのお店の評価)を代入
-    stores = []
-    values["results"].each do |value|
-        store = Hash.new { |h,k| h[k] = {} }
-        store["name"] = value["name"]
-        store["photo_reference"] = value["photos"][0]["photo_reference"] if value["photos"]
-        store["rating"] = value["rating"]
-
-        stores.push(store)
+    # storesに周囲のお店の、name(お店の名前), photo_reference(お店の画像を取得するための参照情報), rating(GoogleMap上でのお店の評価),緯度・経度を代入
+    stores = values["results"].each_with_object([]) do |value, store| 
+        store << {
+          "name" => value["name"],
+          "photo_reference" => value["photos"][0]["photo_reference"],
+          "rating" => value["rating"],
+          "latitude" => value["geometry"]["location"]["lat"],
+          "longitude" => value["geometry"]["location"]["lng"],
+        }
     end
 
     # storesをrating(お店の評価点)の高い順にソートして返す
-    stores = stores.sort{|a,b| a['rating'].to_f <=> b['rating'].to_f}.reverse
+    stores.sort_by!{|store| store["rating"]}.reverse 
   end
 
 
   # お店の写真のURLを取得
-  def get_photo_url(store)
+  def photo_url_params(store)
     # photo_referenceを使って、そのお店の画像を取得するAPI
-    store_api_url = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=#{store}&key=#{ENV["KEY"]}"
+    store_api_url = "https://maps.googleapis.com/maps/api/place/photo?"
     uri = URI.parse(store_api_url)
+    uri.query = URI.encode_www_form({ maxwidth: 400, photoreference: "#{store}", key: "#{ENV["KEY"]}" })
     response = Net::HTTP.get_response(uri)
     values = Nokogiri::HTML.parse(response.body)
 
@@ -100,42 +101,52 @@ class WebhookController < ApplicationController
     return values.css("a").attribute('href').value
   end
 
+
   # LINEでお店情報を返信する際の、テンプレートの返信型
   def template_message(stores)
+      message = 
+      {
+        "type": "template",
+        "altText": "周辺のお店の食べログ🍽",
+        "template": {
+            "type": "carousel",
+            "columns": [],
+            "imageAspectRatio": "rectangle",
+            "imageSize": "cover"
+        }
+      }
 
-    # LINEの返信には配列の中にハッシュがある構造が必要なので作成
-    # 5つ以上返信することが出来ないので、5.times doを使用
-    message = Array.new
-    5.times do |i|
-        message.push(
-            {
-                "type": "template",
-                "altText": "This is a buttons template",
-                "template": {
-                    "type": "buttons",
-                    "thumbnailImageUrl": get_photo_url(stores[i]["photo_reference"]),
-                    "imageAspectRatio": "rectangle",
-                    "imageSize": "cover",
-                    "imageBackgroundColor": "#FFFFFF",
-                    "title": stores[i]["name"],
-                    "text": "⭐️ #{stores[i]["rating"]}",
-                    "defaultAction": {
-                        "type": "uri",
-                        "label": "View detail",
-                        "uri": "http://example.com/page/123"
-                    },
-                    "actions": [
-                        {
-                        "type": "uri",
-                        "label": "View detail",
-                        "uri": "http://example.com/page/123"
-                        }
-                    ]
+      stores.each_with_index do |store, index|
+        message[:template][:columns].push(
+          {
+            "thumbnailImageUrl": photo_url_params(store["photo_reference"]),
+            "imageBackgroundColor": "#FFFFFF",
+            "title": store["name"],
+            "text": "⭐️ #{store["rating"]}",
+            "defaultAction": {
+                "type": "uri",
+                "label": "場所を表示する",
+                "uri": "https://maps.google.com./maps?q=#{store["latitude"]},#{store["longitude"]}"
+            },
+            "actions": [
+                {
+                    "type": "uri",
+                    "label": "場所を表示する",
+                    "uri": "https://maps.google.com./maps?q=#{store["latitude"]},#{store["longitude"]}"
                 }
-            }
+            ]
+          }
         )
-    end
+
+        break if index > MAXIMUM_AMOUNT_MESSAGE_NUMBER
+        index += 1
+      end
 
     return message
   end
+
+
+  private
+    MAXIMUM_AMOUNT_MESSAGE_NUMBER = 8
+
 end
