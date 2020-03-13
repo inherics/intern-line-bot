@@ -65,7 +65,6 @@ class WebhookController < ApplicationController
     # LINEで送った現在地から、住所・緯度・経度を取得
     def current_location_params(event)
       {
-        address: event.message['address'],
         latitude: event.message['latitude'],
         longitude: event.message['longitude']
       }
