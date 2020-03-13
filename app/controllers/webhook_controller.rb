@@ -29,7 +29,7 @@ class WebhookController < ApplicationController
           message = 
           {
             type: 'text',
-            text: event.message['text']
+            text: text_response(event.message['text'])
           }
           
           client.reply_message(event['replyToken'], message)
@@ -52,101 +52,108 @@ class WebhookController < ApplicationController
   end
 
 
-  # LINEで送った現在地から、住所・緯度・経度を取得
-  def current_location_params(event)
-    {
-      "address" => event.message['address'],
-      "latitude" => event.message['latitude'],
-      "longitude" => event.message['longitude']
-    }
-  end
-
-
-  # 現在地から周囲のレストランの情報を取得
-  def search_near_store(location)
-
-    # 緯度・経度・周囲の距離(今回は５００メートル）・店の種類（今回は「レストラン」）から周囲のお店を検索するAPI
-    location_api_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
-    uri = URI.parse(location_api_url)
-    uri.query = URI.encode_www_form({ location: "#{location["latitude"]},#{location["longitude"]}", radius: 500, types: "restaurant", language: "ja", key: "#{ENV["KEY"]}" })  
-    response = Net::HTTP.get_response(uri)
-    values = JSON.parse(response.body)
-
-    # storesに周囲のお店の、name(お店の名前), photo_reference(お店の画像を取得するための参照情報), rating(GoogleMap上でのお店の評価),緯度・経度を代入
-    stores = values["results"].each_with_object([]) do |value, store| 
-        store << {
-          "name" => value["name"],
-          "photo_reference" => value["photos"][0]["photo_reference"],
-          "rating" => value["rating"],
-          "latitude" => value["geometry"]["location"]["lat"],
-          "longitude" => value["geometry"]["location"]["lng"],
-        }
-    end
-
-    # storesをrating(お店の評価点)の高い順にソートして返す
-    stores.sort_by!{|store| store["rating"]}.reverse 
-  end
-
-
-  # お店の写真のURLを取得
-  def photo_url_params(store)
-    # photo_referenceを使って、そのお店の画像を取得するAPI
-    store_api_url = "https://maps.googleapis.com/maps/api/place/photo?"
-    uri = URI.parse(store_api_url)
-    uri.query = URI.encode_www_form({ maxwidth: 400, photoreference: "#{store}", key: "#{ENV["KEY"]}" })
-    response = Net::HTTP.get_response(uri)
-    values = Nokogiri::HTML.parse(response.body)
-
-    # 解析したレスポンスがHTML形式だったので、a(アンカー)の中身を取得して返すプログラムを作成
-    return values.css("a").attribute('href').value
-  end
-
-
-  # LINEでお店情報を返信する際の、テンプレートの返信型
-  def template_message(stores)
-      message = 
-      {
-        "type": "template",
-        "altText": "周辺のお店の食べログ🍽",
-        "template": {
-            "type": "carousel",
-            "columns": [],
-            "imageAspectRatio": "rectangle",
-            "imageSize": "cover"
-        }
-      }
-
-      stores.each_with_index do |store, index|
-        message[:template][:columns].push(
-          {
-            "thumbnailImageUrl": photo_url_params(store["photo_reference"]),
-            "imageBackgroundColor": "#FFFFFF",
-            "title": store["name"],
-            "text": "⭐️ #{store["rating"]}",
-            "defaultAction": {
-                "type": "uri",
-                "label": "場所を表示する",
-                "uri": "https://maps.google.com./maps?q=#{store["latitude"]},#{store["longitude"]}"
-            },
-            "actions": [
-                {
-                    "type": "uri",
-                    "label": "場所を表示する",
-                    "uri": "https://maps.google.com./maps?q=#{store["latitude"]},#{store["longitude"]}"
-                }
-            ]
-          }
-        )
-
-        break if index > MAXIMUM_AMOUNT_MESSAGE_NUMBER
-        index += 1
-      end
-
-    return message
-  end
-
-
   private
     MAXIMUM_AMOUNT_MESSAGE_NUMBER = 8
+    SEARCH_STORE_RADIUS = 500
+    # 緯度・経度・周囲の距離(メートル）・店の種類（今回は「レストラン」）から周囲のお店を検索するAPI
+    LOCATION_URL_API = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
+    # photo_referenceを使って、そのお店の画像を取得するAPI
+    STORE_URL_API = "https://maps.googleapis.com/maps/api/place/photo?"
+    
+    # LINEで送った現在地から、住所・緯度・経度を取得
+    def current_location_params(event)
+      {
+        :address => event.message['address'],
+        :latitude => event.message['latitude'],
+        :longitude => event.message['longitude']
+      }
+    end
+
+
+    # 現在地から周囲のレストランの情報を取得
+    def search_near_store(location)
+      uri = URI.parse(LOCATION_URL_API)
+      uri.query = URI.encode_www_form({ location: "#{location[:latitude]},#{location[:longitude]}", radius: SEARCH_STORE_RADIUS, types: "restaurant", language: "ja", key: "#{ENV["KEY"]}" })  
+      response = Net::HTTP.get_response(uri)
+      values = JSON.parse(response.body).deep_symbolize_keys
+
+      # storesに周囲のお店の、name(お店の名前), photo_reference(お店の画像を取得するための参照情報), rating(GoogleMap上でのお店の評価),緯度・経度を代入
+      stores = values[:results].each_with_object([]) do |value, store| 
+          store << {
+            name: value[:name],
+            photo_reference: value[:photos][0][:photo_reference],
+            rating: value[:rating],
+            latitude: value[:geometry][:location][:lat],
+            longitude: value[:geometry][:location][:lng],
+          }
+      end
+
+      # storesをrating(お店の評価点)の高い順にソートして返す
+      stores.sort_by!{|store| store[:rating]}.reverse 
+    end
+
+
+    # お店の写真のURLを取得
+    def photo_url(store)
+      uri = URI.parse(STORE_URL_API)
+      uri.query = URI.encode_www_form({ maxwidth: 400, photoreference: "#{store}", key: "#{ENV["KEY"]}" })
+      response = Net::HTTP.get_response(uri)
+      values = Nokogiri::HTML.parse(response.body)
+
+      # 解析したレスポンスがHTML形式だったので、a(アンカー)の中身を取得して返すプログラムを作成
+      return values.css("a").attribute('href').value
+    end
+
+
+    # LINEでお店情報を返信する際の、テンプレートの返信型
+    def template_message(stores)
+        message = 
+        {
+          "type": "template",
+          "altText": "周辺のお店の食べログ🍽",
+          "template": {
+              "type": "carousel",
+              "columns": [],
+              "imageAspectRatio": "rectangle",
+              "imageSize": "cover"
+          }
+        }
+
+        stores.each_with_index do |store, index|
+          message[:template][:columns].push(
+            {
+              "thumbnailImageUrl": photo_url(store[:photo_reference]),
+              "imageBackgroundColor": "#FFFFFF",
+              "title": store[:name],
+              "text": "⭐️ #{store[:rating]}",
+              "defaultAction": {
+                  "type": "uri",
+                  "label": "場所を表示する",
+                  "uri": "https://maps.google.com./maps?q=#{store[:latitude]},#{store[:longitude]}"
+              },
+              "actions": [
+                  {
+                      "type": "uri",
+                      "label": "場所を表示する",
+                      "uri": "https://maps.google.com./maps?q=#{store[:latitude]},#{store[:longitude]}"
+                  }
+              ]
+            }
+          )
+
+          break if index > MAXIMUM_AMOUNT_MESSAGE_NUMBER
+        end
+
+      return message
+    end
+
+    def text_response(text)
+      case text
+      when '腹減った' || 'お腹すいた' || '空腹' || '腹ぺこ' || 'ひもじい'
+        response = 'お腹が空いていると力が出ませんね…。現在地を送信してくださると、周辺のオススメのお店を紹介しますよ！'
+      else
+        response = '現在地を送信してください。周囲のオススメのお店を紹介しますよ！'
+      end
+    end
 
 end
