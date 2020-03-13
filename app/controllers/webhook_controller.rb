@@ -1,4 +1,5 @@
 require 'line/bot'
+require 'search.rb'
 
 class WebhookController < ApplicationController
   protect_from_forgery except: [:callback] # CSRF対策無効化
@@ -29,7 +30,7 @@ class WebhookController < ApplicationController
           message = 
           {
             type: 'text',
-            text: text_response(event.message['text'])
+            text: Search.sample("笑い")
           }
           
           client.reply_message(event['replyToken'], message)
