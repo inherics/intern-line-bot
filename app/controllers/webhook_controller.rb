@@ -59,13 +59,15 @@ class WebhookController < ApplicationController
     LOCATION_URL_API = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
     # photo_referenceを使って、そのお店の画像を取得するAPI
     STORE_URL_API = "https://maps.googleapis.com/maps/api/place/photo?"
+    # 緯度・経度からGoogleMapを表示するAPI
+    GOOGLE_MAP_API = "https://maps.google.com./maps?"
     
     # LINEで送った現在地から、住所・緯度・経度を取得
     def current_location_params(event)
       {
-        :address => event.message['address'],
-        :latitude => event.message['latitude'],
-        :longitude => event.message['longitude']
+        address: event.message['address'],
+        latitude: event.message['latitude'],
+        longitude: event.message['longitude']
       }
     end
 
@@ -79,13 +81,13 @@ class WebhookController < ApplicationController
 
       # storesに周囲のお店の、name(お店の名前), photo_reference(お店の画像を取得するための参照情報), rating(GoogleMap上でのお店の評価),緯度・経度を代入
       stores = values[:results].each_with_object([]) do |value, store| 
-          store << {
-            name: value[:name],
-            photo_reference: value[:photos][0][:photo_reference],
-            rating: value[:rating],
-            latitude: value[:geometry][:location][:lat],
-            longitude: value[:geometry][:location][:lng],
-          }
+        store << {
+          name: value[:name],
+          photo_reference: value[:photos][0][:photo_reference],
+          rating: value[:rating],
+          latitude: value[:geometry][:location][:lat],
+          longitude: value[:geometry][:location][:lng],
+        }
       end
 
       # storesをrating(お店の評価点)の高い順にソートして返す
@@ -107,42 +109,45 @@ class WebhookController < ApplicationController
 
     # LINEでお店情報を返信する際の、テンプレートの返信型
     def template_message(stores)
-        message = 
-        {
-          "type": "template",
-          "altText": "周辺のお店の食べログ🍽",
-          "template": {
-              "type": "carousel",
-              "columns": [],
-              "imageAspectRatio": "rectangle",
-              "imageSize": "cover"
-          }
+      message = 
+      {
+        "type": "template",
+        "altText": "周辺のお店の食べログ🍽",
+        "template": {
+            "type": "carousel",
+            "columns": [],
+            "imageAspectRatio": "rectangle",
+            "imageSize": "cover"
         }
+      }
 
-        stores.each_with_index do |store, index|
-          message[:template][:columns].push(
-            {
-              "thumbnailImageUrl": photo_url(store[:photo_reference]),
-              "imageBackgroundColor": "#FFFFFF",
-              "title": store[:name],
-              "text": "⭐️ #{store[:rating]}",
-              "defaultAction": {
-                  "type": "uri",
-                  "label": "場所を表示する",
-                  "uri": "https://maps.google.com./maps?q=#{store[:latitude]},#{store[:longitude]}"
-              },
-              "actions": [
-                  {
-                      "type": "uri",
-                      "label": "場所を表示する",
-                      "uri": "https://maps.google.com./maps?q=#{store[:latitude]},#{store[:longitude]}"
-                  }
-              ]
-            }
-          )
+      stores.each_with_index do |store, index|
+        uri = URI.parse(GOOGLE_MAP_API)
+        uri.query = URI.encode_www_form({ q: "#{store[:latitude]},#{store[:longitude]}" })
+        
+        message[:template][:columns].push(
+          {
+            "thumbnailImageUrl": photo_url(store[:photo_reference]),
+            "imageBackgroundColor": "#FFFFFF",
+            "title": store[:name],
+            "text": "⭐️ #{store[:rating]}",
+            "defaultAction": {
+                "type": "uri",
+                "label": "場所を表示する",
+                "uri": uri
+            },
+            "actions": [
+                {
+                    "type": "uri",
+                    "label": "場所を表示する",
+                    "uri": uri
+                }
+            ]
+          }
+        )
 
-          break if index > MAXIMUM_AMOUNT_MESSAGE_NUMBER
-        end
+        break if index > MAXIMUM_AMOUNT_MESSAGE_NUMBER
+      end
 
       return message
     end
