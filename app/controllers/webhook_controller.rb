@@ -153,7 +153,7 @@ class WebhookController < ApplicationController
 
     def text_response(text)
       case text
-      when '腹減った' || 'お腹すいた' || '空腹' || '腹ぺこ' || 'ひもじい'
+      when '腹減った' , 'お腹すいた' , '腹ぺこ' , 'ひもじい' , '圧倒的空腹感'
         response = 'お腹が空いていると力が出ませんね…。現在地を送信してくださると、周辺のオススメのお店を紹介しますよ！'
       else
         response = '現在地を送信してください。周囲のオススメのお店を紹介しますよ！'
